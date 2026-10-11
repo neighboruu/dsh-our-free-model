@@ -96,7 +96,8 @@ export async function postKiloStreamed({ body, signal, onData, timeoutMs = TURN_
   // `Retry-After` is seconds on the wire and milliseconds in the classified
   // failure — the other lanes' posters convert before classifying, so does this.
   const retrySeconds = Number(response.headers.get('retry-after'))
-  const setRetry = Number.isFinite(retrySeconds) && retrySeconds > 0 ? Math.trunc(retrySeconds * 1000) : undefined
+  const retryMs = Math.ceil(retrySeconds * 1000)
+  const setRetry = Number.isSafeInteger(retryMs) && retryMs > 0 ? retryMs : undefined
   if (!response.ok) {
     const text = await response.text().catch(() => '')
     throw classifyKilo(response.status, text, setRetry)
@@ -107,7 +108,13 @@ export async function postKiloStreamed({ body, signal, onData, timeoutMs = TURN_
   const shape = sniffBody(head.text)
   if (shape === 'empty') throw new UpstreamError('model stream returned no body', CODE.empty)
   if (shape === 'sse') {
-    await readSse(replayStream(head), onData, signal, timeoutMs)
+    await readSse(replayStream(head), data => {
+      // This gateway can report the same refusal after committing HTTP 200.
+      let payload
+      try { payload = JSON.parse(data) } catch { /* the shared reader handles non-JSON frames */ }
+      if (payload?.error) throw classifyKilo(response.status, data, setRetry)
+      onData(data)
+    }, signal, timeoutMs)
     return { status: response.status }
   }
 
@@ -160,7 +167,19 @@ function classifyKilo(status, text, retryAfterMs) {
   if (typeof type === 'string' && /PAID_MODEL_AUTH_REQUIRED/i.test(type)) {
     return new UpstreamError('this model is not on the free pool: it needs a Kilo account, so it is not served by this channel', CODE.client, { status })
   }
-  const failure = classifyFailure(status, shaped, retryAfterMs)
+  const failure = classifyFailure(payload?.error?.code === 429 ? 429 : status, shaped, retryAfterMs)
+  if (failure.code === CODE.quota) {
+    // metadata.raw may contain account identifiers, provider URLs and key
+    // remedies. Recognize the observed structured TPM refusal, never relay it.
+    let upstream
+    try { upstream = JSON.parse(payload?.error?.metadata?.raw) } catch { /* optional provider detail */ }
+    const tpm = upstream?.error?.type === 'rate_limited'
+      && typeof upstream.error.message === 'string'
+      && /request limited TPM reached/i.test(upstream.error.message)
+    failure.message = tpm
+      ? "The upstream provider's tokens-per-minute (TPM) limit was reached. Try again later."
+      : 'The upstream provider rate limit was reached. Try again later.'
+  }
   if (typeof failure.message === 'string' && /moderation|flagged|filtered/i.test(failure.message)) {
     return new UpstreamError(failure.message, CODE.client, { status })
   }

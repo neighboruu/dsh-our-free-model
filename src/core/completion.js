@@ -134,7 +134,16 @@ export function foldForwardOutcome(outcome, chunk) {
     case 'usage': outcome.usage = toOpenAiUsage(chunk.usage); break
     case 'finish':
       if (chunk.reason?.kind === 'max-tokens') outcome.truncated = true
-      if (chunk.reason?.kind === 'error' || chunk.reason?.kind === 'aborted') outcome.error = chunk.reason.failure?.message
+      if (chunk.reason?.kind === 'error' || chunk.reason?.kind === 'aborted') {
+        const failure = chunk.reason.failure
+        outcome.error = failure?.message ?? 'upstream request failed'
+        // Keep only the classified facts the local HTTP boundary needs.
+        outcome.failure = {
+          code: failure?.code,
+          status: failure?.status,
+          providerRetryAfterMs: failure?.providerRetryAfterMs,
+        }
+      }
       break
     default: break
   }

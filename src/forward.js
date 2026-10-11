@@ -143,6 +143,29 @@ function openAiError(res, status, type, message, code = null) {
   json(res, status, { error: { message, type, param: null, code } })
 }
 
+/** A classified quota refusal stays actionable through either local API. */
+function completionError(outcome) {
+  const quota = outcome.failure?.code === 'RATE_LIMIT'
+  return {
+    message: String(outcome.error),
+    type: quota ? 'rate_limit_error' : 'server_error',
+    param: null,
+    code: quota ? 'RATE_LIMIT' : null,
+  }
+}
+
+function completionHttpError(res, outcome) {
+  const error = completionError(outcome)
+  const quota = error.code === 'RATE_LIMIT'
+  const delay = outcome.failure?.providerRetryAfterMs
+  // Never turn an untrusted header into NaN, Infinity, a negative delay or
+  // an imprecise integer; round up so a client does not retry before the window.
+  if (quota && Number.isSafeInteger(delay) && delay > 0) {
+    res.setHeader('retry-after', String(Math.ceil(delay / 1000)))
+  }
+  json(res, quota ? 429 : 502, { error })
+}
+
 /**
  * Resolve the bind address for the listener.
  *
@@ -784,7 +807,7 @@ async function chatCompletions(req, res, complete, options = {}) {
     const outcome = await complete({ model, openAi: body })
     // 截断或恢复失败即使已有部分正文，也不能返回正常完成。
     if (outcome.error !== undefined) {
-      openAiError(res, 502, 'server_error', outcome.error)
+      completionHttpError(res, outcome)
       return
     }
     const calls = executableCalls(outcome, tools)
@@ -846,7 +869,7 @@ async function chatCompletions(req, res, complete, options = {}) {
     // — but a turn the lane refused must still say so. Answering a refusal with a
     // clean `finish_reason: stop` and no content is the empty-200 this endpoint's
     // non-streaming branch fixed, arriving by the other door.
-    sendSse(res, { error: { message: String(outcome.error), type: 'server_error' } })
+    sendSse(res, { error: completionError(outcome) })
     res.write('data: [DONE]\n\n')
     res.end()
     return
@@ -973,7 +996,7 @@ async function responsesEndpoint(req, res, complete, options = {}) {
       }
     })
     if (outcome.error !== undefined) {
-      say('response.failed', { response: response({ status: 'failed', error: { message: String(outcome.error) } }) })
+      say('response.failed', { response: response({ status: 'failed', error: completionError(outcome) }) })
       res.end()
       return
     }
@@ -1009,7 +1032,7 @@ async function responsesEndpoint(req, res, complete, options = {}) {
 
   const outcome = await complete({ model, openAi, responses: true, responsesBody: body })
   if (outcome.error !== undefined) {
-    openAiError(res, 502, 'server_error', outcome.error)
+    completionHttpError(res, outcome)
     return
   }
   const rows = outputRows(outcome)

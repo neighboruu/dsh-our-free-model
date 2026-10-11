@@ -57,6 +57,8 @@
 - **The Kilo channel (keyless free pool)** — the free model pool of Kilo AI's public gateway (the listing's `isFree` slice, fetched live, including the `kilo-auto/free` auto-router) is built in; no account, no key. Model cards carry a Kilo badge. Thinking effort works like the EAC lane: the model's own level menu (Off / Low / Medium / High, default High), sent for real through the gateway's unified `reasoning` parameter — Off was verified family by family to zero out thinking (nemotron, ling, dots, poolside, apodex, cohere); the stepfun and liquid endpoints refuse to disable thinking (HTTP 400) and the two auto-routers ignore it, so those models' menus omit the Off rung. The pool is the upstream's free offer, and its model cards state that prompts may be logged to improve their services — never send sensitive content; see the [Disclaimer](#disclaimer).
 - **Clean names in the UI** — no mojibake, no upstream vendor strings leaking into your model picker.
 
+Local Chat Completions and Responses clients receive HTTP `429` with `RATE_LIMIT` when the upstream rejects a turn for quota, plus a validated numeric `Retry-After` when provided. If streaming headers have already been sent, the stream ends with a classified error instead (Chat error + `[DONE]`, or `response.failed`); its HTTP status remains `200`. A recognized upstream TPM limit is described without exposing provider account details. That quota must clear upstream; restarting the local gateway does not raise it, and this handling does not retry or switch models.
+
 ## What you get
 
 **Composer model picker**

@@ -45,6 +45,7 @@ const suites = [
   ['updater', 'updater-test.mjs', []],
   ['upgrade-ui', 'upgrade-ui-test.mjs', []],
   ['forward', 'forward-test.mjs', []],
+  ['forward-quota', 'forward-quota-test.mjs', []],
   ['chan-relay', 'chan-relay-test.mjs', []],
   ['channel-pack', 'channel-pack-test.mjs', []],
   ['forward-boot', 'forward-boot-test.mjs', []],
